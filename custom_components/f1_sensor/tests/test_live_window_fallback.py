@@ -1200,6 +1200,54 @@ async def test_event_tracker_window_extends_disconnect_on_live_activity(
 
 
 @pytest.mark.asyncio
+async def test_monitor_window_extends_active_race_beyond_thirty_minutes(
+    monkeypatch, hass
+) -> None:
+    now = dt_util.utcnow()
+    bus = _DummyBus()
+    heartbeat_ages = iter([0.0] * 7 + [80.0])
+    bus.last_heartbeat_age = (  # type: ignore[method-assign]
+        lambda: next(heartbeat_ages, 80.0)
+    )
+    bus.last_stream_activity_age = (  # type: ignore[method-assign]
+        lambda *_streams: None
+    )
+    supervisor = LiveSessionSupervisor(
+        hass,
+        _DummySessionCoordinator({}, status=200),
+        bus,
+        http_session=object(),  # type: ignore[arg-type]
+    )
+    window = _mk_window(
+        meeting="Delayed Grand Prix",
+        session="Race",
+        start=now - dt.timedelta(hours=3),
+        end=now - dt.timedelta(minutes=15),
+    )
+    original_disconnect = window.disconnect_at
+    step = live_window.POST_WINDOW_EXTENSION_STEP
+    current_times = iter(
+        original_disconnect + step * iteration + dt.timedelta(seconds=1)
+        for iteration in range(1, 9)
+    )
+
+    async def _no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(supervisor, "_interruptible_sleep", _no_sleep)
+    monkeypatch.setattr(
+        live_window.dt_util,
+        "utcnow",
+        lambda: next(current_times, original_disconnect + step * 8),
+    )
+
+    reason = await supervisor._monitor_window(window, source="index")
+
+    assert reason == "disconnect-window-expired"
+    assert window.disconnect_at == original_disconnect + step * 7
+
+
+@pytest.mark.asyncio
 async def test_no_legacy_blind_fallback_when_both_down(monkeypatch, hass) -> None:
     coord = _DummySessionCoordinator({}, status=403)
     bus = _DummyBus()

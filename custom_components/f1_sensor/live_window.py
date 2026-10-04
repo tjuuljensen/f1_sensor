@@ -45,6 +45,7 @@ SESSION_RUNNING_STATES = {"Started", "Resumed"}
 DEFAULT_PRE_WINDOW = timedelta(minutes=60)
 DEFAULT_POST_WINDOW = timedelta(minutes=15)
 POST_WINDOW_EXTENSION_CAP = timedelta(minutes=30)
+RACE_POST_WINDOW_EXTENSION_CAP = timedelta(hours=2)
 POST_WINDOW_EXTENSION_STEP = timedelta(minutes=5)
 SCHEDULE_RECONCILIATION_HORIZON = timedelta(hours=48)
 SCHEDULE_TIME_MISMATCH_THRESHOLD = timedelta(minutes=5)
@@ -1411,7 +1412,13 @@ class LiveSessionSupervisor:
         replay_generation = self._availability.replay_generation
         label = window.label
         reason = "disconnect-window-expired"
-        max_disconnect_at = window.disconnect_at + POST_WINDOW_EXTENSION_CAP
+        session_name_l = window.session_name.strip().lower()
+        extension_cap = (
+            RACE_POST_WINDOW_EXTENSION_CAP
+            if session_name_l in {"race", "sprint", "sprint race"}
+            else POST_WINDOW_EXTENSION_CAP
+        )
+        max_disconnect_at = window.disconnect_at + extension_cap
         while not self._stopped:
             await self._interruptible_sleep(ACTIVE_REFRESH.total_seconds())
             if (
@@ -1430,7 +1437,6 @@ class LiveSessionSupervisor:
             now = dt_util.utcnow()
             hb_age = self._bus.last_heartbeat_age()
             activity_age = self._bus.last_stream_activity_age(LIVE_ACTIVITY_STREAMS)
-            session_name_l = window.session_name.lower()
             allow_post_finish_inactivity = (
                 window.end_utc <= now < window.disconnect_at
                 and ("qualifying" in session_name_l or "shootout" in session_name_l)
